@@ -1,24 +1,41 @@
-"use client";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { NextRequest, NextResponse } from "next/server";
 
-export default function Callback() {
-  const router = useRouter();
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const code = searchParams.get("code");
 
-  useEffect(() => {
-    const query = new URLSearchParams(window.location.search);
-    const code = query.get("code");
-    if (!code) return;
+  if (!code) return NextResponse.redirect("/app");
 
-    fetch("/api/spotify/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    })
-      .then((res) => res.json())
-      .then(() => router.push("/dashboard"))
-      .catch(console.error);
-  }, [router]);
+  const params = new URLSearchParams();
+  params.append("grant_type", "authorization_code");
+  params.append("code", code);
+  params.append("redirect_uri", process.env.SPOTIFY_REDIRECT_URI!);
 
-  return <p>Logging in...</p>;
+  const basicAuth = Buffer.from(
+    `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+  ).toString("base64");
+
+  const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: params.toString(),
+  });
+
+  const tokenData = await tokenRes.json();
+
+  if (!tokenData.access_token) return NextResponse.redirect("/app");
+
+  // Set HTTP-only cookie
+  const response = NextResponse.redirect("/dashboard");
+  response.cookies.set("spotify_token", tokenData.access_token, {
+    httpOnly: true,
+    path: "/",
+    maxAge: tokenData.expires_in,
+    sameSite: "lax",
+  });
+
+  return response;
 }
